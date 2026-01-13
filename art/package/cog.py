@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import os
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -83,7 +85,7 @@ class ArtCog(commands.GroupCog, name="art"):
     @app_commands.command(name="submit", description="Submit artwork for a ball.")
     @app_commands.describe(
         ball="The ball this artwork is for",
-        media_url="URL to your artwork (image, video, etc.)",
+        attachment="Your artwork file (image, video, etc.)",
         title="Optional title for your artwork",
         description="Optional description of your artwork",
     )
@@ -92,7 +94,7 @@ class ArtCog(commands.GroupCog, name="art"):
         self,
         interaction: Interaction,
         ball: BallTransformer,
-        media_url: str,
+        attachment: discord.Attachment,
         title: str | None = None,
         description: str | None = None,
     ):
@@ -120,13 +122,8 @@ class ArtCog(commands.GroupCog, name="art"):
             )
             return
 
-        # Validate media URL (basic check)
-        if not media_url.startswith(("http://", "https://")):
-            await interaction.followup.send(
-                "Invalid media URL. Please provide a valid HTTP or HTTPS URL.",
-                ephemeral=True,
-            )
-            return
+        # Get attachment URL (Discord CDN URL)
+        media_url = attachment.url
 
         # Create art entry
         art_entry = await ArtEntry.objects.acreate(
@@ -155,7 +152,7 @@ class ArtCog(commands.GroupCog, name="art"):
             embed.add_field(name="Title", value=title, inline=False)
         if description:
             embed.add_field(name="Description", value=description[:1024], inline=False)
-        embed.add_field(name="Media URL", value=f"[View Media]({media_url})", inline=False)
+        embed.set_image(url=media_url)
         embed.set_footer(text=f"Submitted at {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -164,7 +161,7 @@ class ArtCog(commands.GroupCog, name="art"):
     @app_commands.describe(ball="The ball to view artwork for")
     @app_commands.checks.bot_has_permissions(send_messages=True, embed_links=True)
     async def art_view(self, interaction: Interaction, ball: BallTransformer):
-        """View approved art entries for a given ball."""
+        """View approved art entries for a given ball with full ball details."""
         await interaction.response.defer(ephemeral=True, thinking=True)
 
         config = await get_settings()
@@ -179,18 +176,49 @@ class ArtCog(commands.GroupCog, name="art"):
                 status=ArtStatus.APPROVED,
                 enabled=True,
             )
-            .select_related("artist", "ball")
+            .select_related("artist", "ball", "ball__regime", "ball__economy")
             .order_by("-created_at")[:10]
         )
 
-        if not entries:
-            await interaction.followup.send(
-                f"No approved artwork found for **{ball.country}**.",
-                ephemeral=True,
+        # Create main embed with ball details
+        main_embed = discord.Embed(
+            title=f"🎨 Artwork for {ball.country}",
+            color=discord.Color.blue(),
+        )
+
+        # Add comprehensive ball information
+        main_embed.add_field(name="Ball Name", value=ball.country, inline=True)
+        main_embed.add_field(name="Attack", value=str(ball.attack), inline=True)
+        main_embed.add_field(name="Health", value=str(ball.health), inline=True)
+        main_embed.add_field(name="Rarity", value=f"{ball.rarity:.2f}", inline=True)
+        main_embed.add_field(name="Capacity Name", value=ball.capacity_name or "None", inline=True)
+        main_embed.add_field(name="Tradeable", value="Yes" if ball.tradeable else "No", inline=True)
+
+        if ball.capacity_description:
+            main_embed.add_field(
+                name="Capacity Description",
+                value=ball.capacity_description[:1024],
+                inline=False,
             )
+
+        if ball.credits:
+            main_embed.add_field(name="Art Credits", value=ball.credits, inline=True)
+
+        if hasattr(ball, "cached_regime") and ball.cached_regime:
+            main_embed.add_field(name="Regime", value=ball.cached_regime.name, inline=True)
+
+        if hasattr(ball, "cached_economy") and ball.cached_economy:
+            main_embed.add_field(name="Economy", value=ball.cached_economy.name, inline=True)
+
+        if not entries:
+            main_embed.description = "No approved artwork found for this ball."
+            await interaction.followup.send(embed=main_embed, ephemeral=True)
             return
 
-        embeds = []
+        main_embed.description = f"Found {len(entries)} approved artwork submission(s)."
+
+        # Add artwork embeds
+        embeds = [main_embed]
         for entry in entries:
             embed = discord.Embed(
                 title=entry.title or "Untitled Artwork",
@@ -223,7 +251,7 @@ class ArtCog(commands.GroupCog, name="art"):
 
             embeds.append(embed)
 
-        await interaction.followup.send(embeds=embeds, ephemeral=True)
+        await interaction.followup.send(embeds=embeds[:10], ephemeral=True)  # Discord limit is 10 embeds
 
     @app_commands.command(name="info", description="View details of a specific art entry.")
     @app_commands.describe(entry_id="The ID of the art entry (e.g., #ABC123)")
@@ -306,6 +334,157 @@ class ArtCog(commands.GroupCog, name="art"):
         embed.set_footer(text=f"Created on {entry.created_at.strftime('%Y-%m-%d')}")
 
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # ----- Spawn/Card Commands -----
+
+    spawn = app_commands.Group(name="spawn", description="Manage spawn art posts")
+    card = app_commands.Group(name="card", description="Manage collection card art posts")
+
+    @spawn.command(name="create", description="Post all spawn/wild art in a thread (admin only).")
+    @app_commands.describe(thread="The thread to post spawn art in")
+    @app_commands.checks.bot_has_permissions(send_messages=True, attach_files=True)
+    async def spawn_create(self, interaction: Interaction, thread: discord.Thread):
+        """Post all spawn/wild art in the selected thread."""
+        if not await is_staff(interaction):
+            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        # Get all enabled balls
+        balls = await sync_to_async(list)(
+            Ball.objects.filter(enabled=True).select_related("regime", "economy").order_by("country")
+        )
+
+        if not balls:
+            await interaction.followup.send("No enabled balls found.", ephemeral=True)
+            return
+
+        # Send initial message
+        await interaction.followup.send(
+            f"Starting to post {len(balls)} spawn art images in {thread.mention}...",
+            ephemeral=True,
+        )
+
+        posted = 0
+        failed = 0
+
+        for ball in balls:
+            try:
+                if not ball.wild_card or not ball.wild_card.name:
+                    failed += 1
+                    continue
+
+                # Get file path and create discord.File
+                file_path = ball.wild_card.path
+                if not os.path.exists(file_path):
+                    failed += 1
+                    continue
+
+                # Sanitize filename
+                safe_filename = "".join(c for c in ball.country if c.isalnum() or c in (" ", "-", "_")).strip()[:50]
+                filename = f"{safe_filename}_spawn.png"
+                file = discord.File(file_path, filename=filename)
+
+                # Create embed
+                embed = discord.Embed(
+                    title=f"{ball.country} - Spawn Art",
+                    color=discord.Color.blue(),
+                )
+                embed.set_image(url=f"attachment://{filename}")
+                embed.add_field(name="Rarity", value=f"{ball.rarity:.2f}", inline=True)
+                embed.add_field(name="Attack", value=str(ball.attack), inline=True)
+                embed.add_field(name="Health", value=str(ball.health), inline=True)
+
+                # Send to thread
+                await thread.send(embed=embed, file=file)
+                posted += 1
+
+                # Small delay to avoid rate limits
+                await asyncio.sleep(0.5)
+
+            except Exception as e:
+                failed += 1
+                continue
+
+        await interaction.followup.send(
+            f"✅ Completed! Posted {posted} images, {failed} failed.",
+            ephemeral=True,
+        )
+
+    @card.command(name="create", description="Post all collection card art in a thread (admin only).")
+    @app_commands.describe(thread="The thread to post collection card art in")
+    @app_commands.checks.bot_has_permissions(send_messages=True, attach_files=True)
+    async def card_create(self, interaction: Interaction, thread: discord.Thread):
+        """Post all collection card art in the selected thread."""
+        if not await is_staff(interaction):
+            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        # Get all enabled balls
+        balls = await sync_to_async(list)(
+            Ball.objects.filter(enabled=True).select_related("regime", "economy").order_by("country")
+        )
+
+        if not balls:
+            await interaction.followup.send("No enabled balls found.", ephemeral=True)
+            return
+
+        # Send initial message
+        await interaction.followup.send(
+            f"Starting to post {len(balls)} collection card images in {thread.mention}...",
+            ephemeral=True,
+        )
+
+        posted = 0
+        failed = 0
+
+        for ball in balls:
+            try:
+                if not ball.collection_card or not ball.collection_card.name:
+                    failed += 1
+                    continue
+
+                # Get file path and create discord.File
+                file_path = ball.collection_card.path
+                if not os.path.exists(file_path):
+                    failed += 1
+                    continue
+
+                # Sanitize filename
+                safe_filename = "".join(c for c in ball.country if c.isalnum() or c in (" ", "-", "_")).strip()[:50]
+                filename = f"{safe_filename}_card.png"
+                file = discord.File(file_path, filename=filename)
+
+                # Create embed
+                embed = discord.Embed(
+                    title=f"{ball.country} - Collection Card",
+                    color=discord.Color.blue(),
+                )
+                embed.set_image(url=f"attachment://{filename}")
+                embed.add_field(name="Rarity", value=f"{ball.rarity:.2f}", inline=True)
+                embed.add_field(name="Attack", value=str(ball.attack), inline=True)
+                embed.add_field(name="Health", value=str(ball.health), inline=True)
+                if ball.capacity_name:
+                    embed.add_field(name="Capacity", value=ball.capacity_name, inline=False)
+
+                # Send to thread
+                await thread.send(embed=embed, file=file)
+                posted += 1
+
+                # Small delay to avoid rate limits
+                await asyncio.sleep(0.5)
+
+            except Exception as e:
+                failed += 1
+                continue
+
+        await interaction.followup.send(
+            f"✅ Completed! Posted {posted} images, {failed} failed.",
+            ephemeral=True,
+        )
 
     # ----- Admin Commands -----
 
