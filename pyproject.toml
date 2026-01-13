@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ballsdex-art"
+version = "1.0.0"
+
+description = "Art package for BallsDex V3 - Submit and view custom artwork for balls"
+license = "MIT"
+authors = [
+    { name = "BallsDex Community" },
+]
+readme = "README.md"
+
+dependencies = [
+    "ballsdex>=3.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Ballsdex-Team/BallsDex-DiscordBot"
