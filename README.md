@@ -12,7 +12,7 @@ Add the following entry to `config/extra.toml` so BallsDex installs the package 
 
 ```toml
 [[ballsdex.packages]]
-location = "git+https://github.com/Caylies/Art-BD-Package.git"
+location = "git+https://github.com/Haymooed/BallsDex-Art-Package.git"
 path = "art"
 enabled = true
 editable = false
