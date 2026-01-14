@@ -25,7 +25,6 @@ Interaction = discord.Interaction["BallsDexBot"]
 
 
 async def get_settings() -> ArtSettings:
-    """Load art settings in async context."""
     return await sync_to_async(ArtSettings.get_solo)()
 
 
@@ -55,12 +54,10 @@ class ArtCog(commands.GroupCog, name="art"):
 
         if current:
             try:
-                # Try to parse as hex ID
                 current_hex = current.strip().lstrip("#")
                 current_int = int(current_hex, 16)
                 queryset = queryset.filter(pk=current_int)
             except ValueError:
-                # Search by title or ball name
                 queryset = queryset.filter(
                     Q(title__icontains=current) | Q(ball__country__icontains=current)
                 )
@@ -76,6 +73,7 @@ class ArtCog(commands.GroupCog, name="art"):
             choices.append(app_commands.Choice(name=name[:100], value=value))
 
         return choices
+
 
     @app_commands.command(name="submit", description="Submit artwork for a ball.")
     @app_commands.describe(
@@ -152,7 +150,6 @@ class ArtCog(commands.GroupCog, name="art"):
     @app_commands.describe(ball="The ball to view artwork for")
     @app_commands.checks.bot_has_permissions(send_messages=True, embed_links=True)
     async def art_view(self, interaction: Interaction, ball: BallTransformer):
-        """View approved art entries for a given ball with full ball details."""
         await interaction.response.defer(ephemeral=True, thinking=True)
 
         config = await get_settings()
@@ -175,7 +172,6 @@ class ArtCog(commands.GroupCog, name="art"):
             color=discord.Color.blue(),
         )
 
-        # Add comprehensive ball information
         main_embed.add_field(name="Ball Name", value=ball.country, inline=True)
         main_embed.add_field(name="Attack", value=str(ball.attack), inline=True)
         main_embed.add_field(name="Health", value=str(ball.health), inline=True)
@@ -224,6 +220,7 @@ class ArtCog(commands.GroupCog, name="art"):
             embed.add_field(name="Entry ID", value=f"#{entry.pk:X}", inline=True)
 
             if entry.media_url:
+                # Try to set image if it's likely an image URL
                 if any(ext in entry.media_url.lower() for ext in [".jpg", ".jpeg", ".png", ".gif", ".webp"]):
                     embed.set_image(url=entry.media_url)
                 else:
@@ -241,10 +238,8 @@ class ArtCog(commands.GroupCog, name="art"):
     @app_commands.autocomplete(entry_id=entry_id_autocomplete)
     @app_commands.checks.bot_has_permissions(send_messages=True, embed_links=True)
     async def art_info(self, interaction: Interaction, entry_id: str):
-        """View details of a specific art entry."""
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        # Parse entry ID (remove # if present, convert hex to int)
         try:
             entry_id = entry_id.strip().lstrip("#")
             entry_pk = int(entry_id, 16)
@@ -311,14 +306,14 @@ class ArtCog(commands.GroupCog, name="art"):
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+
     spawn = app_commands.Group(name="spawn", description="Manage spawn art posts")
     card = app_commands.Group(name="card", description="Manage collection card art posts")
 
-    @spawn.command(name="create", description="Create threads and post all spawn/wild art (admin only).")
-    @app_commands.describe(channel="The channel to create threads in")
+    @spawn.command(name="create", description="Create forum posts and post all spawn/wild art (admin only).")
+    @app_commands.describe(channel="The forum channel to create posts in")
     @app_commands.checks.bot_has_permissions(send_messages=True, attach_files=True, manage_threads=True, create_public_threads=True)
-    async def spawn_create(self, interaction: Interaction, channel: discord.TextChannel):
-        """Create threads for each ball and post spawn/wild art in them."""
+    async def spawn_create(self, interaction: Interaction, channel: discord.ForumChannel):
         if not await is_staff(interaction):
             await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
             return
@@ -334,7 +329,7 @@ class ArtCog(commands.GroupCog, name="art"):
             return
 
         await interaction.followup.send(
-            f"Starting to create threads and post {len(balls)} spawn art images in {channel.mention}...",
+            f"Starting to create forum posts and post {len(balls)} spawn art images in {channel.mention}...",
             ephemeral=True,
         )
 
@@ -347,7 +342,6 @@ class ArtCog(commands.GroupCog, name="art"):
                     failed += 1
                     continue
 
-                # Get file path and create discord.File
                 file_path = ball.wild_card.path
                 if not os.path.exists(file_path):
                     failed += 1
@@ -384,14 +378,13 @@ class ArtCog(commands.GroupCog, name="art"):
                 if hasattr(ball, "cached_economy") and ball.cached_economy:
                     embed.add_field(name="Economy", value=ball.cached_economy.name, inline=True)
 
-                thread_name = ball.country[:100]  # Discord thread name limit
-                thread = await channel.create_thread(
-                    name=thread_name,
-                    type=discord.ChannelType.public_thread,
+                post_name = ball.country[:100]  # Discord forum post name limit
+                thread, message = await channel.create_thread(
+                    name=post_name,
+                    embed=embed,
+                    file=file,
                     auto_archive_duration=1440,  # 24 hours
                 )
-
-                await thread.send(embed=embed, file=file)
                 posted += 1
 
                 await asyncio.sleep(0.5)
@@ -401,15 +394,15 @@ class ArtCog(commands.GroupCog, name="art"):
                 continue
 
         await interaction.followup.send(
-            f"✅ Completed! Created {posted} threads with images, {failed} failed.",
+            f"✅ Completed! Created {posted} forum posts with images, {failed} failed.",
             ephemeral=True,
         )
 
-    @card.command(name="create", description="Create threads and post all collection card art (admin only).")
-    @app_commands.describe(channel="The channel to create threads in")
+    @card.command(name="create", description="Create forum posts and post all collection card art (admin only).")
+    @app_commands.describe(channel="The forum channel to create posts in")
     @app_commands.checks.bot_has_permissions(send_messages=True, attach_files=True, manage_threads=True, create_public_threads=True)
-    async def card_create(self, interaction: Interaction, channel: discord.TextChannel):
-        """Create threads for each ball and post collection card art in them."""
+    async def card_create(self, interaction: Interaction, channel: discord.ForumChannel):
+        """Create forum posts for each ball and post collection card art in them."""
         if not await is_staff(interaction):
             await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
             return
@@ -425,7 +418,7 @@ class ArtCog(commands.GroupCog, name="art"):
             return
 
         await interaction.followup.send(
-            f"Starting to create threads and post {len(balls)} collection card images in {channel.mention}...",
+            f"Starting to create forum posts and post {len(balls)} collection card images in {channel.mention}...",
             ephemeral=True,
         )
 
@@ -474,14 +467,13 @@ class ArtCog(commands.GroupCog, name="art"):
                 if hasattr(ball, "cached_economy") and ball.cached_economy:
                     embed.add_field(name="Economy", value=ball.cached_economy.name, inline=True)
 
-                thread_name = ball.country[:100]  # Discord thread name limit
-                thread = await channel.create_thread(
-                    name=thread_name,
-                    type=discord.ChannelType.public_thread,
+                post_name = ball.country[:100]  # Discord forum post name limit
+                thread, message = await channel.create_thread(
+                    name=post_name,
+                    embed=embed,
+                    file=file,
                     auto_archive_duration=1440,  # 24 hours
                 )
-
-                await thread.send(embed=embed, file=file)
                 posted += 1
 
                 await asyncio.sleep(0.5)
@@ -491,7 +483,7 @@ class ArtCog(commands.GroupCog, name="art"):
                 continue
 
         await interaction.followup.send(
-            f"✅ Completed! Created {posted} threads with images, {failed} failed.",
+            f"✅ Completed! Created {posted} forum posts with images, {failed} failed.",
             ephemeral=True,
         )
 
@@ -581,6 +573,7 @@ class ArtCog(commands.GroupCog, name="art"):
         embed.add_field(name="Ball", value=entry.ball.country, inline=True)
         embed.add_field(name="Title", value=entry.title or "Untitled", inline=True)
 
+        # Try to notify the artist
         try:
             artist_user = await self.bot.fetch_user(entry.artist.discord_id)
             notify_embed = discord.Embed(
@@ -646,6 +639,7 @@ class ArtCog(commands.GroupCog, name="art"):
         if reason:
             embed.add_field(name="Reason", value=reason[:1024], inline=False)
 
+        # Try to notify the artist
         try:
             artist_user = await self.bot.fetch_user(entry.artist.discord_id)
             notify_embed = discord.Embed(
