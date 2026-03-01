@@ -1,14 +1,13 @@
+> [!IMPORTANT]
+> Original code created by [Cayla](https://github.com/Caylies) you can view the orginal package here: [Art](https://github.com/Caylies/Art-BD-Package)
+
 # BallsDex V3 Art Package 🎨
 
-The **Art Package** for **BallsDex V3** allows players to submit and view custom artwork associated with specific balls or collectibles. The system is fully configurable via the **admin panel** and follows the **same structure and conventions** as the BallsDex V3 Merchant Package.
-
-This package is designed to integrate cleanly with the BallsDex V3 custom package system.
-
----
+Art submission, review, and display package for **BallsDex V3**. Players can submit
+artwork for balls, admins can review and moderate submissions, and everyone can
+browse approved community art.
 
 ## Installation (`extra.toml`)
-
-Add the following entry to `config/extra.toml` so BallsDex installs the package automatically:
 
 ```toml
 [[ballsdex.packages]]
@@ -18,96 +17,49 @@ enabled = true
 editable = false
 ```
 
-The package is distributed as a standard Python package — no manual file copying required.
+## Configuration (Admin Panel)
 
----
+All settings are managed through the admin panel — nothing is hardcoded.
 
-## Admin Panel Integration
-
-The art system works entirely through the admin panel, following the same format and patterns used by the BallsDex V3 Merchant Package.
-
-No values are hardcoded. All settings and data are editable from the panel.
-
-### Configuration
-
-Configuration follows the BallsDex V3 custom package guidelines:
-https://wiki.ballsdex.com/dev/custom-package/
-
-#### Art Settings (singleton)
-- Enable / disable art submissions and viewing
-- Require approval toggle (if disabled, submissions are auto-approved)
+**Art Settings** (singleton):
+- Enable / disable all art commands
+- Toggle approval requirement (auto-approve or require review)
 - Maximum submissions per player per day
 
-#### Art Entries
-- Linked Ball
-- Artist (player who submitted)
-- Title (optional)
-- Description (optional)
-- Media URL (image, video, etc.)
-- Status (Pending/Approved/Rejected)
-- Enabled toggle
-- Review information (reviewer, review date, rejection reason)
+**Art Entries**:
+- Linked ball, artist, title, description, media URL
+- Status: Pending / Approved / Rejected
+- Enabled/disabled toggle
+- Reviewer, review date, rejection reason
+- Bulk approve/reject admin actions
 
-Admins can:
-- View all art entries with filtering and search
-- Approve or reject submissions
-- Bulk approve/reject actions
-- Manage visibility (enable/disable entries)
+## Slash Commands
 
----
+### Player commands
+| Command | Description |
+|---------|-------------|
+| `/art submit <ball> <attachment> [title] [description]` | Submit artwork for a ball |
+| `/art view <ball>` | Browse approved artwork for a ball (paginated) |
+| `/art info <entry_id>` | View details of a specific entry |
+| `/art mine [status]` | View your own submissions, filtered by status |
 
-## Commands (Slash Commands / app_commands)
+### Admin commands
+| Command | Description |
+|---------|-------------|
+| `/art review list [status]` | List submissions (filter by status) |
+| `/art review approve <entry_id> ` | Approve an entry and notify the artist |
+| `/art review reject <entry_id> [reason]` | Reject an entry and notify the artist |
+| `/art spawn create <channel>` | Post all spawn/wild art into a forum channel |
+| `/art card create <channel>` | Post all collection card art into a forum channel |
 
-### Player Commands
+## Notes
 
-- `/art submit <ball> <media_url> [title] [description]` — Submit artwork tied to a specific ball.
-- `/art view <ball>` — View approved art entries for a given ball.
-- `/art info <entry_id>` — View details of a specific art entry (title, description, media, artist).
-
-### Admin Commands
-
-- `/art review` — List pending artwork submissions.
-- `/art approve <entry_id>` — Approve an art entry.
-- `/art reject <entry_id> [reason]` — Reject an art entry with an optional reason.
-
----
-
-## Behaviour Requirements
-
-- Art submissions start in Pending state (unless auto-approval is enabled).
-- Only Approved art is visible with `/art view`.
-- Admin approvals/rejections update status and optionally notify submitters via DM.
-- Validates media URLs on submission.
-- Respects daily submission limits per player.
-- Artists can view their own submissions regardless of status.
-
----
-
-## Embed Output
-
-Approved artwork embeds include:
-- Title
-- Artist (player) with avatar
-- Ball name
-- Description
-- Media preview (image/video link)
-- Submission date
-- Entry ID
-
----
-
-## Technical Notes
-
-- Follows the same file structure, setup flow, and patterns as the Merchant Package.
-- Uses async `setup(bot)` and modern `app_commands`.
-- Fully compatible with BallsDex V3 models (Ball, Player, etc.).
-- Designed to plug directly into the BallsDex V3 extra/custom package loader.
-- Uses singleton pattern for settings management (similar to django-solo).
-
-This package feels native to BallsDex V3, consistent with existing official and community packages, and easy for admins to manage through the panel.
-
----
+- Follows V3 custom package conventions (`extra.toml`, Django app + discord.py cog).
+- Paginated views using BallsDex's built-in `Pages` menu.
+- Artist DM notifications on approval/rejection.
+- Entry IDs displayed in hex for a clean look.
+- Daily submission limit enforced per-player.
 
 ## License
 
-MIT License
+MIT

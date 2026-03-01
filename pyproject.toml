@@ -3,13 +3,13 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ballsdex-art"
+name = "ballsdex-Art"
 version = "0.0.0"
 
-description = "Approve, selct and view bd art"
+description = "Art extensions"
 license = "MIT"
 authors = [
-    { name = "Haymooed" },
+    { name = "Haymooed, Caylie" },
 ]
 readme = "README.md"
 

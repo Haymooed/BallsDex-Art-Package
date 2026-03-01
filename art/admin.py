@@ -1,47 +1,52 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from django.contrib import admin
 from django.utils.html import format_html
 
 from .models import ArtEntry, ArtSettings, ArtStatus
 
-if TYPE_CHECKING:
-    from django.db.models import QuerySet
-
 
 @admin.register(ArtSettings)
 class ArtSettingsAdmin(admin.ModelAdmin):
-    """Singleton-style admin for art settings."""
-
     fieldsets = (
+        ("Status", {"fields": ("enabled",)}),
         (
-            "Status",
-            {"fields": ("enabled",)},
+            "Submissions",
+            {"fields": ("require_approval", "max_submissions_per_day")},
         ),
         (
-            "Behaviour",
+            "Accept Command",
             {
-                "fields": (
-                    "require_approval",
-                    "max_submissions_per_day",
+                "fields": ("accepted_message", "accepted_emoji", "update_thread_art"),
+                "description": (
+                    "Settings used by /art spawn accept and /art card accept. "
+                    "accepted_message supports $user and $ball placeholders."
+                ),
+            },
+        ),
+        (
+            "Forum Utilities",
+            {
+                "fields": ("safe_threads",),
+                "description": (
+                    "Comma-separated thread names that will never be deleted "
+                    "when running /art spawn create or /art card create."
                 ),
             },
         ),
     )
 
     def has_add_permission(self, request):
-        # Only allow a single settings row
         if ArtSettings.objects.exists():
             return False
         return super().has_add_permission(request)
 
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 @admin.register(ArtEntry)
 class ArtEntryAdmin(admin.ModelAdmin):
-    """Admin configuration for art entries."""
-
     list_display = (
         "id",
         "title_display",
@@ -51,42 +56,21 @@ class ArtEntryAdmin(admin.ModelAdmin):
         "enabled",
         "created_at",
     )
-    list_filter = ("status", "enabled", "created_at", "ball")
+    list_filter = ("status", "enabled", "ball")
     search_fields = ("title", "description", "ball__country", "artist__discord_id")
-    readonly_fields = (
-        "created_at",
-        "updated_at",
-        "reviewed_at",
-        "media_preview",
-    )
+    readonly_fields = ("created_at", "updated_at", "reviewed_at", "media_preview")
     autocomplete_fields = ("ball", "artist", "reviewed_by")
     date_hierarchy = "created_at"
+    actions = ["action_approve", "action_reject"]
 
     fieldsets = (
         (
-            "Art Information",
-            {
-                "fields": (
-                    "ball",
-                    "artist",
-                    "title",
-                    "description",
-                    "media_url",
-                    "media_preview",
-                )
-            },
+            "Artwork",
+            {"fields": ("ball", "artist", "title", "description", "media_url", "media_preview")},
         ),
         (
-            "Status & Moderation",
-            {
-                "fields": (
-                    "status",
-                    "enabled",
-                    "rejection_reason",
-                    "reviewed_by",
-                    "reviewed_at",
-                )
-            },
+            "Moderation",
+            {"fields": ("status", "enabled", "rejection_reason", "reviewed_by", "reviewed_at")},
         ),
         (
             "Timestamps",
@@ -94,71 +78,79 @@ class ArtEntryAdmin(admin.ModelAdmin):
         ),
     )
 
-    actions = ["approve_selected", "reject_selected"]
-
     @admin.display(description="Title")
     def title_display(self, obj: ArtEntry) -> str:
-        """Display title or 'Untitled'."""
-        return obj.title or "Untitled"
+        return obj.display_title
 
     @admin.display(description="Status")
     def status_badge(self, obj: ArtEntry) -> str:
-        """Display status with color coding."""
         colors = {
-            ArtStatus.PENDING: "orange",
-            ArtStatus.APPROVED: "green",
-            ArtStatus.REJECTED: "red",
+            ArtStatus.PENDING: "#e67e22",
+            ArtStatus.APPROVED: "#27ae60",
+            ArtStatus.REJECTED: "#e74c3c",
         }
-        color = colors.get(obj.status, "gray")
+        color = colors.get(obj.status, "#95a5a6")
         return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 8px; '
-            'border-radius: 3px; font-weight: bold;">{}</span>',
+            '<span style="background:{};color:#fff;padding:2px 8px;border-radius:3px;'
+            'font-weight:bold;font-size:0.85em">{}</span>',
             color,
             obj.get_status_display(),
         )
 
     @admin.display(description="Media Preview")
     def media_preview(self, obj: ArtEntry) -> str:
-        """Display a preview link for the media URL."""
-        if obj.media_url:
+        if not obj.media_url:
+            return "—"
+        if obj.is_image_url():
             return format_html(
-                '<a href="{}" target="_blank">View Media</a>',
-                obj.media_url,
+                '<a href="{url}" target="_blank">'
+                '<img src="{url}" style="max-height:120px;max-width:240px;border-radius:4px"/>'
+                "</a>",
+                url=obj.media_url,
             )
-        return "No media URL"
+        return format_html('<a href="{}" target="_blank">View Media ↗</a>', obj.media_url)
 
-    @admin.action(description="Approve selected art entries")
-    def approve_selected(self, request, queryset: "QuerySet[ArtEntry]"):
-        """Bulk approve action."""
+    @admin.action(description="✅ Approve selected art entries")
+    def action_approve(self, request, queryset):
         from bd_models.models import Player
 
         try:
-            reviewer = Player.objects.get(discord_id=request.user.discord_user_id)
-        except (Player.DoesNotExist, AttributeError):
-            self.message_user(request, "Could not find reviewer player. Approval failed.", level="error")
-            return
+            reviewer = Player.objects.get(discord_id=getattr(request.user, "discord_user_id", None))
+        except (Player.DoesNotExist, TypeError, AttributeError):
+            # Fall back to a sentinel reviewer if none is found
+            reviewer = None
 
         count = 0
-        for entry in queryset.filter(status=ArtStatus.PENDING):
-            entry.approve(reviewer)
+        for entry in queryset.exclude(status=ArtStatus.APPROVED):
+            if reviewer:
+                entry.approve(reviewer)
+            else:
+                from django.utils import timezone
+                entry.status = ArtStatus.APPROVED
+                entry.reviewed_at = timezone.now()
+                entry.rejection_reason = ""
+                entry.save(update_fields=["status", "reviewed_at", "rejection_reason", "updated_at"])
             count += 1
+        self.message_user(request, f"Approved {count} art entr{'y' if count == 1 else 'ies'}.")
 
-        self.message_user(request, f"Successfully approved {count} art entries.")
-
-    @admin.action(description="Reject selected art entries")
-    def reject_selected(self, request, queryset: "QuerySet[ArtEntry]"):
-        """Bulk reject action."""
+    @admin.action(description="❌ Reject selected art entries")
+    def action_reject(self, request, queryset):
         from bd_models.models import Player
 
         try:
-            reviewer = Player.objects.get(discord_id=request.user.discord_user_id)
-        except (Player.DoesNotExist, AttributeError):
-            self.message_user(request, "Could not find reviewer player. Rejection failed.", level="error")
-            return
+            reviewer = Player.objects.get(discord_id=getattr(request.user, "discord_user_id", None))
+        except (Player.DoesNotExist, TypeError, AttributeError):
+            reviewer = None
 
         count = 0
-        for entry in queryset.filter(status=ArtStatus.PENDING):
-            entry.reject(reviewer, "Bulk rejected via admin panel")
+        for entry in queryset.exclude(status=ArtStatus.REJECTED):
+            if reviewer:
+                entry.reject(reviewer, "Bulk rejected via admin panel")
+            else:
+                from django.utils import timezone
+                entry.status = ArtStatus.REJECTED
+                entry.reviewed_at = timezone.now()
+                entry.rejection_reason = "Bulk rejected via admin panel"
+                entry.save(update_fields=["status", "reviewed_at", "rejection_reason", "updated_at"])
             count += 1
-
-        self.message_user(request, f"Successfully rejected {count} art entries.")
+        self.message_user(request, f"Rejected {count} art entr{'y' if count == 1 else 'ies'}.")
