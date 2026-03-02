@@ -1,5 +1,5 @@
-> [!IMPORTANT]
-> Original code created by [Cayla](https://github.com/Caylies) you can view the orginal package here: [Art](https://github.com/Caylies/Art-BD-Package)
+> [!NOTE]
+> Original code created by [Cayla](https://github.com/Caylies) you can view the orginal package here: [Art-BD-Package](https://github.com/Caylies/Art-BD-Package)
 
 # BallsDex V3 Art Package 🎨
 
@@ -63,3 +63,6 @@ All settings are managed through the admin panel — nothing is hardcoded.
 ## License
 
 MIT
+
+> [!IMPORTANT]
+> Reminder to take a look at Cayla's original code: https://github.com/Caylies/Art-BD-Package
